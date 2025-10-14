@@ -1,14 +1,13 @@
+# Terraform binaries & local files
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
 .venv/
 processor.zip
-
-# Terraform local files
-.terraform/
-*.tfstate
-*.tfstate.*
-.terraform.lock.hcl
