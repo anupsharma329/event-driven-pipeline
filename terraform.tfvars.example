@@ -1,0 +1,5 @@
+# Copy to terraform.tfvars and set real values for local testing
+aws_region = "us-east-1"
+lambda_function_name = ""
+raw_bucket_name = ""
+code_bucket_name = ""
