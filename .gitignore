@@ -1,0 +1,12 @@
+# Terraform files
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+*.tfvars
+
+# Provider cache
+.terraform/providers/
+
+# Optional: OS files
+.DS_Store
