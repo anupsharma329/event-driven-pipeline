@@ -10,3 +10,13 @@
 
 # Optional: OS files
 .DS_Store
+# Terraform local plugin cache
+.terraform/
+# Local virtualenv
+.venv/
+# Build artifacts
+build/
+# Pytest cache
+.pytest_cache/
+# OS/editor
+.DS_Store
