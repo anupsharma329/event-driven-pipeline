@@ -2,21 +2,30 @@ import json
 import logging
 import os
 from datetime import datetime
-
 import boto3
 
+# -----------------------------
+# Setup Logger
+# -----------------------------
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-S3_BUCKET = os.environ.get("RAW_BUCKET") or "megaminds-raw-events"
+# -----------------------------
+# AWS S3 Client
+# -----------------------------
+S3_BUCKET = os.environ.get("RAW_BUCKET")  # fallback not needed, using Terraform bucket
 S3_CLIENT = boto3.client("s3")
 
-
+# -----------------------------
+# Pure processing function
+# -----------------------------
 def process_records(records):
-    """Pure function to process a list of event records (dicts).
-
-    For sample data this computes simple aggregates: count and numeric field sums.
-    Returns a summary dict.
+    """
+    Computes:
+      - count of records
+      - sums of numeric fields per key
+    Input: list of dicts
+    Output: summary dict
     """
     total = 0
     sums = {}
@@ -28,15 +37,10 @@ def process_records(records):
 
     return {"count": total, "sums": sums, "timestamp": datetime.utcnow().isoformat()}
 
-
+# -----------------------------
+# Lambda handler
+# -----------------------------
 def handler(event, context):
-    """AWS Lambda handler triggered by S3 put events containing JSON payloads.
-
-    The function will:
-    - Read the uploaded S3 object (expects JSON array or single json object)
-    - Compute a small per-file summary via process_records
-    - Write the summary back to S3 under the `processed/` prefix next to original key
-    """
     logger.info("Received event: %s", json.dumps(event))
 
     # Extract S3 object info
@@ -44,27 +48,47 @@ def handler(event, context):
         rec = event["Records"][0]
         bucket = rec["s3"]["bucket"]["name"]
         key = rec["s3"]["object"]["key"]
-    except Exception as e:
-        logger.exception("Failed to parse event")
+        logger.info("Processing S3 object: s3://%s/%s", bucket, key)
+    except Exception:
+        logger.exception("Failed to parse S3 event")
         raise
 
-    # Download object
+    # Download object from S3
     try:
         obj = S3_CLIENT.get_object(Bucket=bucket, Key=key)
         body = obj["Body"].read().decode("utf-8")
         data = json.loads(body)
-        # normalize to list
-        records = data if isinstance(data, list) else [data]
+
+        # -----------------------------
+        # Handle JSON structure
+        # -----------------------------
+        # 1. If top-level dict with 'items', use the items array
+        # 2. If top-level list, use directly
+        # 3. Otherwise wrap single dict into a list
+        if isinstance(data, dict) and "items" in data and isinstance(data["items"], list):
+            records = data["items"]
+        elif isinstance(data, list):
+            records = data
+        else:
+            records = [data]
+
+        logger.info("Number of records to process: %d", len(records))
+
     except Exception:
         logger.exception("Failed to read or parse S3 object %s/%s", bucket, key)
         raise
 
+    # Process records
     summary = process_records(records)
 
-    # Build destination key
+    # Upload summary back to S3
     dest_key = f"processed/{key}.summary.json"
     try:
-        S3_CLIENT.put_object(Bucket=bucket, Key=dest_key, Body=json.dumps(summary).encode("utf-8"))
+        S3_CLIENT.put_object(
+            Bucket=bucket,
+            Key=dest_key,
+            Body=json.dumps(summary, indent=2).encode("utf-8"),
+        )
         logger.info("Wrote summary to s3://%s/%s", bucket, dest_key)
     except Exception:
         logger.exception("Failed to write summary to s3://%s/%s", bucket, dest_key)
@@ -72,8 +96,13 @@ def handler(event, context):
 
     return {"status": "ok", "summary_key": dest_key}
 
-
+# -----------------------------
+# Local testing
+# -----------------------------
 if __name__ == "__main__":
-    # local smoke run for quick dev
-    sample = [{"value": 10, "x": 1}, {"value": 5, "x": 3}]
+    sample = [
+        {"id": 1, "value": 10},
+        {"id": 2, "value": 25},
+        {"id": 3, "value": 15}
+    ]
     print(process_records(sample))
