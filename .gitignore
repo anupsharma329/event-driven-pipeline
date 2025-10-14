@@ -1,13 +1,22 @@
-echo ".terraform/" >> .gitignore
-echo "*.tfstate*" >> .gitignore
-echo ".terraform.lock.hcl" >> .gitignore
-echo "__pycache__/" >> .gitignore
-echo "processor.zip" >> .gitignore
-
-git add .gitignore
-git commit -m "Add .gitignore to prevent local binaries and state files"
+echo "
+# Terraform local cache
 .terraform/
-*.tfstate*
-.terraform.lock.hcl
-__pycache__/
-processor.zip
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Local artifacts
+*.zip
+*.log
+" >> .gitignore
+
+# Terraform local cache
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Local artifacts
+*.zip
+*.log
+
