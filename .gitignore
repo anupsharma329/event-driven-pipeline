@@ -1,22 +1,14 @@
-# Terraform files
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+processor.zip
+
+# Terraform local files
 .terraform/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
-*.tfvars
-
-# Provider cache
-.terraform/providers/
-
-# Optional: OS files
-.DS_Store
-# Terraform local plugin cache
-.terraform/
-# Local virtualenv
-.venv/
-# Build artifacts
-build/
-# Pytest cache
-.pytest_cache/
-# OS/editor
-.DS_Store
