@@ -53,19 +53,19 @@ jobs:
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          if aws lambda get-function --function-name event_processor >/dev/null 2>&1; then
-            echo "Updating existing Lambda function..."
-            aws lambda update-function-code \
-              --function-name event_processor \
-              --zip-file fileb://build/processor.zip \
-              --region $AWS_REGION
-          else
-            echo "Creating new Lambda function..."
-            aws lambda create-function \
-              --function-name event_processor \
-              --zip-file fileb://build/processor.zip \
-              --handler lambda_fn.processor.handler \
-              --runtime python3.10 \
-              --role ${{ secrets.AWS_LAMBDA_ROLE_ARN }} \
-              --region $AWS_REGION
-          fi
+            if aws lambda get-function --function-name event_processor >/dev/null 2>&1; then
+              echo "Updating existing Lambda function..."
+              aws lambda update-function-code \
+                --function-name event_processor \
+                --zip-file fileb://build/processor.zip \
+                --region $AWS_REGION
+            else
+              echo "Creating new Lambda function..."
+              aws lambda create-function \
+                --function-name event_processor \
+                --zip-file fileb://build/processor.zip \
+                --handler lambda_fn.processor.handler \
+                --runtime python3.10 \
+                --role ${{ secrets.AWS_LAMBDA_ROLE_ARN }} \
+                --region $AWS_REGION
+            fi
