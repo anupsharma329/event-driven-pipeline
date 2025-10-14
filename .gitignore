@@ -1,13 +1,13 @@
-# Terraform binaries & local files
-.terraform/
-*.tfstate
-*.tfstate.*
-.terraform.lock.hcl
+echo ".terraform/" >> .gitignore
+echo "*.tfstate*" >> .gitignore
+echo ".terraform.lock.hcl" >> .gitignore
+echo "__pycache__/" >> .gitignore
+echo "processor.zip" >> .gitignore
 
-# Python
+git add .gitignore
+git commit -m "Add .gitignore to prevent local binaries and state files"
+.terraform/
+*.tfstate*
+.terraform.lock.hcl
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
 processor.zip
