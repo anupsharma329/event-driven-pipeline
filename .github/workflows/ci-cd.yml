@@ -54,23 +54,23 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_LAMBDA_ROLE_ARN: ${{ secrets.AWS_LAMBDA_ROLE_ARN }}
         run: |
-          echo "🔍 Checking if Lambda function 'event_processor' exists..."
-          if aws lambda get-function --function-name event_processor >/dev/null 2>&1; then
-            echo "✅ Lambda exists — updating code..."
-            aws lambda update-function-code \
-              --function-name event_processor \
-              --zip-file fileb://build/processor.zip \
-              --region $AWS_REGION
-          else
-            echo "🚀 Lambda not found — creating new Lambda..."
-            aws lambda create-function \
-              --function-name event_processor \
-              --zip-file fileb://build/processor.zip \
-              --handler lambda_fn.processor.handler \
-              --runtime python3.10 \
-              --role $AWS_LAMBDA_ROLE_ARN \
-              --region $AWS_REGION
-          fi
+            echo "🔍 Checking if Lambda function 'megaminds-processor-91eb83c2' exists..."
+                if aws lambda get-function --function-name megaminds-processor-91eb83c2 >/dev/null 2>&1; then
+              echo "✅ Lambda exists — updating code..."
+              aws lambda update-function-code \
+                --function-name megaminds-processor-91eb83c2 \
+                --zip-file fileb://build/processor.zip \
+                --region $AWS_REGION
+            else
+              echo "🚀 Lambda not found — creating new Lambda..."
+              aws lambda create-function \
+                --function-name megaminds-processor-91eb83c2 \
+                --zip-file fileb://build/processor.zip \
+                --handler lambda_fn.processor.handler \
+                --runtime python3.10 \
+                --role $AWS_LAMBDA_ROLE_ARN \
+                --region $AWS_REGION
+            fi
 
       - name: ✅ Deployment Complete
         run: echo "🎉 Lambda deployment completed successfully!"
