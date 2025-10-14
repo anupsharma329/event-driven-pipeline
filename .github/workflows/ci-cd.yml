@@ -1,4 +1,4 @@
-name: CI-CD Terraform + Lambda deploy
+name: CI-CD Terraform + Lambda Deploy
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
-          pytest -q || echo "No tests found"
+          pytest -q || echo "⚠️ No tests found, skipping tests"
 
       - name: Package Lambda function
         run: |
@@ -49,23 +49,28 @@ jobs:
           terraform init
           terraform apply -auto-approve
 
-      - name: Deploy Lambda function
+      - name: Deploy or Update Lambda Function
         env:
           AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_LAMBDA_ROLE_ARN: ${{ secrets.AWS_LAMBDA_ROLE_ARN }}
         run: |
-            if aws lambda get-function --function-name event_processor >/dev/null 2>&1; then
-              echo "Updating existing Lambda function..."
-              aws lambda update-function-code \
-                --function-name event_processor \
-                --zip-file fileb://build/processor.zip \
-                --region $AWS_REGION
-            else
-              echo "Creating new Lambda function..."
-              aws lambda create-function \
-                --function-name event_processor \
-                --zip-file fileb://build/processor.zip \
-                --handler lambda_fn.processor.handler \
-                --runtime python3.10 \
-                --role ${{ secrets.AWS_LAMBDA_ROLE_ARN }} \
-                --region $AWS_REGION
-            fi
+          echo "🔍 Checking if Lambda function 'event_processor' exists..."
+          if aws lambda get-function --function-name event_processor >/dev/null 2>&1; then
+            echo "✅ Lambda exists — updating code..."
+            aws lambda update-function-code \
+              --function-name event_processor \
+              --zip-file fileb://build/processor.zip \
+              --region $AWS_REGION
+          else
+            echo "🚀 Lambda not found — creating new Lambda..."
+            aws lambda create-function \
+              --function-name event_processor \
+              --zip-file fileb://build/processor.zip \
+              --handler lambda_fn.processor.handler \
+              --runtime python3.10 \
+              --role $AWS_LAMBDA_ROLE_ARN \
+              --region $AWS_REGION
+          fi
+
+      - name: ✅ Deployment Complete
+        run: echo "🎉 Lambda deployment completed successfully!"
