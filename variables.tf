@@ -51,9 +51,8 @@ variable "new_lambda_name" {
 variable "lambda_zip_path" {
   description = "Path to the Lambda deployment zip (relative to terraform working dir)"
   type        = string
-  default     = "../lambda/lambda_package.zip"
+  default     = "lambda_fn/processor.zip"
 }
-
 # Schedule
 variable "daily_cron" {
   description = "Cron or rate expression for the daily summary (EventBridge). Default: daily at 00:00 UTC"

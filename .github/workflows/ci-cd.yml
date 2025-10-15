@@ -10,7 +10,6 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,17 +19,21 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install zip (if needed)
+      - name: Debug repo structure
+        run: |
+          echo "Working directory: $(pwd)"
+          echo "Listing files:"
+          ls -R
+
+      - name: Install zip
         run: sudo apt-get update && sudo apt-get install -y zip
 
       - name: Package Lambda
-        working-directory: lambda
+        working-directory: lambda_fn
         run: |
-          # install dependencies into package/ if you have any, e.g:
-          # pip install -r requirements.txt -t package/
-          # Then add code files into package/ and zip
+          echo "Packaging Lambda from $(pwd)"
           rm -f processor.zip
-          zip -r ../lambda_fn/processor.zip .
+          zip -r processor.zip .
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -38,7 +41,6 @@ jobs:
           terraform_version: "1.5.0"
 
       - name: Terraform Init
-        working-directory: terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -46,7 +48,6 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform Plan
-        working-directory: terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -54,7 +55,6 @@ jobs:
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform Apply
-        working-directory: terraform
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

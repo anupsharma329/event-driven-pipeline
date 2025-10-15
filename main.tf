@@ -17,7 +17,7 @@ provider "aws" {
 ### ----------------------------
 # Create bucket if existing_s3 is false
 resource "aws_s3_bucket" "data_bucket" {
-  count = var.existing_s3 ? 0 : 1
+  count  = var.existing_s3 ? 0 : 1
   bucket = var.new_bucket_name
   acl    = "private"
 
@@ -40,34 +40,28 @@ locals {
 ### ----------------------------
 ### IAM Role for Lambda
 ### ----------------------------
-resource "aws_iam_role" "lambda_exec" {
-  name = "${var.environment}-lambda-exec"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
-  tags = {
-    Env = var.environment
-  }
-}
-
 data "aws_iam_policy_document" "lambda_assume_role" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["lambda.amazonaws.com"]
     }
   }
 }
 
-resource "aws_iam_role_policy" "lambda_policy" {
-  name = "${var.environment}-lambda-policy"
-  role = aws_iam_role.lambda_exec.id
+resource "aws_iam_role" "lambda_exec" {
+  name               = "${var.environment}-lambda-exec"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 
-  policy = data.aws_iam_policy_document.lambda_policy.json
+  tags = {
+    Env = var.environment
+  }
 }
 
 data "aws_iam_policy_document" "lambda_policy" {
   statement {
-    sid = "S3Access"
+    sid     = "S3Access"
     actions = [
       "s3:GetObject",
       "s3:PutObject",
@@ -81,7 +75,7 @@ data "aws_iam_policy_document" "lambda_policy" {
   }
 
   statement {
-    sid = "CloudWatchLogs"
+    sid     = "CloudWatchLogs"
     actions = [
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
@@ -91,12 +85,18 @@ data "aws_iam_policy_document" "lambda_policy" {
   }
 }
 
+resource "aws_iam_role_policy" "lambda_policy" {
+  name   = "${var.environment}-lambda-policy"
+  role   = aws_iam_role.lambda_exec.id
+  policy = data.aws_iam_policy_document.lambda_policy.json
+}
+
 ### ----------------------------
 ### Lambda: reuse or create
 ### ----------------------------
-# If user says reuse existing lambda, get its ARN, otherwise create a new one.
+# If user says reuse existing lambda, get its ARN; otherwise create new
 data "aws_lambda_function" "existing_lambda" {
-  count = var.existing_lambda ? 1 : 0
+  count         = var.existing_lambda ? 1 : 0
   function_name = var.existing_lambda_name
 }
 
@@ -106,7 +106,7 @@ resource "aws_lambda_function" "processor" {
   filename         = var.lambda_zip_path
   function_name    = var.new_lambda_name
   role             = aws_iam_role.lambda_exec.arn
-  handler          = "lambda_handler.handler"
+  handler          = "processor.handler"   # ✅ matches your processor.py
   runtime          = "python3.10"
   source_code_hash = filebase64sha256(var.lambda_zip_path)
   timeout          = 30
@@ -122,16 +122,15 @@ resource "aws_lambda_function" "processor" {
   }
 }
 
-# Expose arn every time via local
 locals {
-  lambda_arn = var.existing_lambda ? data.aws_lambda_function.existing_lambda[0].arn : aws_lambda_function.processor[0].arn
+  lambda_arn  = var.existing_lambda ? data.aws_lambda_function.existing_lambda[0].arn : aws_lambda_function.processor[0].arn
   lambda_name = var.existing_lambda ? data.aws_lambda_function.existing_lambda[0].function_name : aws_lambda_function.processor[0].function_name
 }
 
 ### ----------------------------
 ### S3 Notification (object created) -> Lambda
-### Only create notification if we created the lambda and/or bucket (safe)
 ### ----------------------------
+# Only create if both S3 and Lambda are created new
 resource "aws_s3_bucket_notification" "bucket_to_lambda" {
   count = var.existing_s3 || var.existing_lambda ? 0 : 1
 
@@ -146,9 +145,9 @@ resource "aws_s3_bucket_notification" "bucket_to_lambda" {
   depends_on = [aws_lambda_permission.allow_s3]
 }
 
-# If bucket existed but we created lambda, attach notification via aws_s3_bucket_notification with existing bucket id
+# Attach to existing S3 bucket if it exists but Lambda is new
 resource "aws_s3_bucket_notification" "attach_to_existing_bucket" {
-  count = var.existing_s3 && !var.existing_lambda ? 1 : 0
+  count  = var.existing_s3 && !var.existing_lambda ? 1 : 0
   bucket = data.aws_s3_bucket.existing_bucket[0].bucket
 
   lambda_function {
@@ -160,21 +159,16 @@ resource "aws_s3_bucket_notification" "attach_to_existing_bucket" {
   depends_on = [aws_lambda_permission.allow_s3]
 }
 
-# Permission for S3 to invoke Lambda (only when we created the lambda)
 resource "aws_lambda_permission" "allow_s3" {
-  count = var.existing_lambda ? 0 : 1
+  count         = var.existing_lambda ? 0 : 1
   statement_id  = "AllowExecutionFromS3"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.processor[0].function_name
   principal     = "s3.amazonaws.com"
-  # source_arn would be useful but for simplicity allow from account
-  # source_arn = "arn:aws:s3:::${local.bucket_name}"
 }
 
 ### ----------------------------
-### EventBridge schedule (daily summary run)
-### The schedule will invoke the Lambda to aggregate processed summaries daily at the specified cron.
-### If using existing lambda, we'll create permission + rule to invoke it.
+### EventBridge (daily summary trigger)
 ### ----------------------------
 resource "aws_cloudwatch_event_rule" "daily_summary" {
   name                = "${var.environment}-daily-summary"
@@ -188,7 +182,6 @@ resource "aws_cloudwatch_event_target" "target_lambda" {
 }
 
 resource "aws_lambda_permission" "allow_eventbridge" {
-  count = 1
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
   function_name = local.lambda_name
@@ -197,13 +190,12 @@ resource "aws_lambda_permission" "allow_eventbridge" {
 }
 
 ### ----------------------------
-### Optional: Create prefix object to ensure bucket exists for notification to work (only if created)
+### Optional placeholder object
 ### ----------------------------
 resource "aws_s3_bucket_object" "placeholder" {
-  count  = var.existing_s3 ? 0 : 1
-  bucket = aws_s3_bucket.data_bucket[0].id
-  key    = "._init_bucket"
+  count   = var.existing_s3 ? 0 : 1
+  bucket  = aws_s3_bucket.data_bucket[0].id
+  key     = "._init_bucket"
   content = "init"
-  acl    = "private"
+  acl     = "private"
 }
-
