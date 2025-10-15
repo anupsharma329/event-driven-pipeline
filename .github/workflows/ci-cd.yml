@@ -44,8 +44,11 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
+      # Replace this step in your GitHub Actions:
       - name: Terraform Format Check
-        run: terraform fmt -check
+        run: |
+          terraform fmt -check || (echo "❌ Formatting issues found. Run 'terraform fmt' to fix." && exit 1)
+          
 
       - name: Terraform Init & Apply
         run: |
