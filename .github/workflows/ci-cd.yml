@@ -1,67 +1,62 @@
-name: Event-Driven Pipeline Deployment
+name: CI/CD - Terraform + Lambda
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
 
-    - name: Create Lambda package
-      run: |
-        mkdir -p build
-        cd lambda_fn
-        zip -r ../lambda-function.zip .
-        cd ..
-        echo "Lambda package created"
+      - name: Install zip (if needed)
+        run: sudo apt-get update && sudo apt-get install -y zip
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Package Lambda
+        working-directory: lambda
+        run: |
+          # install dependencies into package/ if you have any, e.g:
+          # pip install -r requirements.txt -t package/
+          # Then add code files into package/ and zip
+          rm -f lambda_package.zip
+          zip -r ../lambda/lambda_package.zip .
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
 
-    - name: Terraform Init
-      run: terraform init
+      - name: Terraform Init
+        working-directory: terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: terraform init -input=false
 
-    - name: Terraform Validate
-      run: terraform validate
+      - name: Terraform Plan
+        working-directory: terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: terraform plan -input=false -out=tfplan
 
-    - name: Terraform Plan
-      run: terraform plan -input=false
-
-    - name: Terraform Apply
-      if: github.ref == 'refs/heads/main'
-      run: terraform apply -auto-approve -input=false
-
-    - name: Test Deployment
-      if: github.ref == 'refs/heads/main'
-      run: |
-        # Upload a test JSON file
-        cat > test-data.json << EOF
-        [
-          {"transaction_id": "1", "amount": 100, "user_id": "user1", "timestamp": "2024-01-01T10:00:00Z"},
-          {"transaction_id": "2", "amount": 200, "user_id": "user2", "timestamp": "2024-01-01T11:00:00Z"}
-        ]
-        EOF
-        
-        # Upload to S3 to trigger processing
-        aws s3 cp test-data.json s3://$(terraform output -raw raw_bucket_name)/test-data.json
-        echo "Test file uploaded, Lambda should process it automatically"
+      - name: Terraform Apply
+        working-directory: terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: terraform apply -input=false -auto-approve tfplan

@@ -1,100 +1,87 @@
 terraform {
+  required_version = ">= 1.0.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = ">= 4.0"
     }
   }
-  required_version = ">= 1.0"
 }
 
 provider "aws" {
   region = var.aws_region
 }
 
+### ----------------------------
+### Conditional S3: reuse or create
+### ----------------------------
+# Create bucket if existing_s3 is false
+resource "aws_s3_bucket" "data_bucket" {
+  count = var.existing_s3 ? 0 : 1
+  bucket = var.new_bucket_name
+  acl    = "private"
+
+  tags = {
+    Name = "event-driven-data-bucket"
+    Env  = var.environment
+  }
+}
+
+# Reference existing bucket if requested
+data "aws_s3_bucket" "existing_bucket" {
+  count  = var.existing_s3 ? 1 : 0
+  bucket = var.existing_bucket_name
+}
+
 locals {
-  name_suffix = "prod"
-  lambda_name = var.lambda_function_name != "" ? var.lambda_function_name : "megaminds-processor-${local.name_suffix}"
+  bucket_name = var.existing_s3 ? data.aws_s3_bucket.existing_bucket[0].bucket : aws_s3_bucket.data_bucket[0].bucket
 }
 
-# S3 bucket for raw JSON events
-resource "aws_s3_bucket" "raw_events" {
-  bucket = var.raw_bucket_name != "" ? var.raw_bucket_name : "megaminds-raw-${local.name_suffix}"
-  
+### ----------------------------
+### IAM Role for Lambda
+### ----------------------------
+resource "aws_iam_role" "lambda_exec" {
+  name = "${var.environment}-lambda-exec"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
   tags = {
-    Environment = "production"
-    Project     = "event-pipeline"
+    Env = var.environment
   }
 }
 
-resource "aws_s3_bucket_versioning" "raw_events" {
-  bucket = aws_s3_bucket.raw_events.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "raw_events" {
-  bucket = aws_s3_bucket.raw_events.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-# S3 bucket for processed data
-resource "aws_s3_bucket" "processed_data" {
-  bucket = "megaminds-processed-${local.name_suffix}"
-  
-  tags = {
-    Environment = "production"
-    Project     = "event-pipeline"
-  }
-}
-
-# DynamoDB for daily summaries
-resource "aws_dynamodb_table" "daily_summaries" {
-  name           = "daily-summaries-${local.name_suffix}"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "date"
-  range_key      = "processed_at"
-
-  attribute {
-    name = "date"
-    type = "S"
-  }
-
-  attribute {
-    name = "processed_at"
-    type = "S"
-  }
-
-  tags = {
-    Environment = "production"
-    Project     = "event-pipeline"
-  }
-}
-
-# IAM role for Lambda
-data "aws_iam_policy_document" "lambda_assume" {
+data "aws_iam_policy_document" "lambda_assume_role" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
-      type        = "Service"
+      type = "Service"
       identifiers = ["lambda.amazonaws.com"]
     }
   }
 }
 
-resource "aws_iam_role" "lambda_role" {
-  name               = "megaminds-lambda-role-${local.name_suffix}"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+resource "aws_iam_role_policy" "lambda_policy" {
+  name = "${var.environment}-lambda-policy"
+  role = aws_iam_role.lambda_exec.id
+
+  policy = data.aws_iam_policy_document.lambda_policy.json
 }
 
-# Enhanced IAM policies for Lambda
-data "aws_iam_policy_document" "lambda_permissions" {
+data "aws_iam_policy_document" "lambda_policy" {
   statement {
+    sid = "S3Access"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:ListBucket",
+      "s3:ListBucketVersions"
+    ]
+    resources = [
+      "arn:aws:s3:::${local.bucket_name}",
+      "arn:aws:s3:::${local.bucket_name}/*"
+    ]
+  }
+
+  statement {
+    sid = "CloudWatchLogs"
     actions = [
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
@@ -102,100 +89,121 @@ data "aws_iam_policy_document" "lambda_permissions" {
     ]
     resources = ["arn:aws:logs:*:*:*"]
   }
-
-  statement {
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:ListBucket"
-    ]
-    resources = [
-      aws_s3_bucket.raw_events.arn,
-      "${aws_s3_bucket.raw_events.arn}/*",
-      aws_s3_bucket.processed_data.arn,
-      "${aws_s3_bucket.processed_data.arn}/*"
-    ]
-  }
-
-  statement {
-    actions = [
-      "dynamodb:PutItem",
-      "dynamodb:GetItem",
-      "dynamodb:UpdateItem",
-      "dynamodb:Query",
-      "dynamodb:Scan"
-    ]
-    resources = [aws_dynamodb_table.daily_summaries.arn]
-  }
 }
 
-resource "aws_iam_role_policy" "lambda_policy" {
-  name   = "megaminds-lambda-policy-${local.name_suffix}"
-  role   = aws_iam_role.lambda_role.id
-  policy = data.aws_iam_policy_document.lambda_permissions.json
+### ----------------------------
+### Lambda: reuse or create
+### ----------------------------
+# If user says reuse existing lambda, get its ARN, otherwise create a new one.
+data "aws_lambda_function" "existing_lambda" {
+  count = var.existing_lambda ? 1 : 0
+  function_name = var.existing_lambda_name
 }
 
-# Lambda function
 resource "aws_lambda_function" "processor" {
-  filename      = "lambda-function.zip"
-  function_name = local.lambda_name
-  role          = aws_iam_role.lambda_role.arn
-  handler       = "index.handler"
-  runtime       = "python3.9"
-  timeout       = 60
+  count = var.existing_lambda ? 0 : 1
+
+  filename         = var.lambda_zip_path
+  function_name    = var.new_lambda_name
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "lambda_handler.handler"
+  runtime          = "python3.10"
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  timeout          = 30
 
   environment {
     variables = {
-      SUMMARY_TABLE    = aws_dynamodb_table.daily_summaries.name
-      PROCESSED_BUCKET = aws_s3_bucket.processed_data.bucket
-      AWS_REGION       = var.aws_region
+      BUCKET = local.bucket_name
     }
   }
 
   tags = {
-    Environment = "production"
-    Project     = "event-pipeline"
+    Env = var.environment
   }
 }
 
-# S3 trigger for Lambda
-resource "aws_lambda_permission" "s3_trigger" {
-  statement_id  = "AllowS3Invoke"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.processor.function_name
-  principal     = "s3.amazonaws.com"
-  source_arn    = aws_s3_bucket.raw_events.arn
+# Expose arn every time via local
+locals {
+  lambda_arn = var.existing_lambda ? data.aws_lambda_function.existing_lambda[0].arn : aws_lambda_function.processor[0].arn
+  lambda_name = var.existing_lambda ? data.aws_lambda_function.existing_lambda[0].function_name : aws_lambda_function.processor[0].function_name
 }
 
-resource "aws_s3_bucket_notification" "lambda_trigger" {
-  bucket = aws_s3_bucket.raw_events.id
+### ----------------------------
+### S3 Notification (object created) -> Lambda
+### Only create notification if we created the lambda and/or bucket (safe)
+### ----------------------------
+resource "aws_s3_bucket_notification" "bucket_to_lambda" {
+  count = var.existing_s3 || var.existing_lambda ? 0 : 1
+
+  bucket = aws_s3_bucket.data_bucket[0].id
 
   lambda_function {
-    lambda_function_arn = aws_lambda_function.processor.arn
+    lambda_function_arn = aws_lambda_function.processor[0].arn
     events              = ["s3:ObjectCreated:*"]
     filter_suffix       = ".json"
   }
 
-  depends_on = [aws_lambda_permission.s3_trigger]
+  depends_on = [aws_lambda_permission.allow_s3]
 }
 
-# CloudWatch Event for daily report generation
-resource "aws_cloudwatch_event_rule" "daily_report" {
-  name                = "daily-report-generation"
-  description         = "Trigger daily report generation"
-  schedule_expression = "cron(0 2 * * ? *)"  # Daily at 2 AM UTC
+# If bucket existed but we created lambda, attach notification via aws_s3_bucket_notification with existing bucket id
+resource "aws_s3_bucket_notification" "attach_to_existing_bucket" {
+  count = var.existing_s3 && !var.existing_lambda ? 1 : 0
+  bucket = data.aws_s3_bucket.existing_bucket[0].bucket
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.processor[0].arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".json"
+  }
+
+  depends_on = [aws_lambda_permission.allow_s3]
 }
 
-resource "aws_cloudwatch_event_target" "daily_report_lambda" {
-  rule      = aws_cloudwatch_event_rule.daily_report.name
-  target_id = "GenerateDailyReport"
-  arn       = aws_lambda_function.processor.arn
-}
-
-resource "aws_lambda_permission" "cloudwatch_report" {
-  statement_id  = "AllowCloudWatchInvoke"
+# Permission for S3 to invoke Lambda (only when we created the lambda)
+resource "aws_lambda_permission" "allow_s3" {
+  count = var.existing_lambda ? 0 : 1
+  statement_id  = "AllowExecutionFromS3"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.processor.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.daily_report.arn
+  function_name = aws_lambda_function.processor[0].function_name
+  principal     = "s3.amazonaws.com"
+  # source_arn would be useful but for simplicity allow from account
+  # source_arn = "arn:aws:s3:::${local.bucket_name}"
 }
+
+### ----------------------------
+### EventBridge schedule (daily summary run)
+### The schedule will invoke the Lambda to aggregate processed summaries daily at the specified cron.
+### If using existing lambda, we'll create permission + rule to invoke it.
+### ----------------------------
+resource "aws_cloudwatch_event_rule" "daily_summary" {
+  name                = "${var.environment}-daily-summary"
+  description         = "Daily trigger for summary aggregation"
+  schedule_expression = var.daily_cron
+}
+
+resource "aws_cloudwatch_event_target" "target_lambda" {
+  rule = aws_cloudwatch_event_rule.daily_summary.name
+  arn  = local.lambda_arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  count = 1
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = local.lambda_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.daily_summary.arn
+}
+
+### ----------------------------
+### Optional: Create prefix object to ensure bucket exists for notification to work (only if created)
+### ----------------------------
+resource "aws_s3_bucket_object" "placeholder" {
+  count  = var.existing_s3 ? 0 : 1
+  bucket = aws_s3_bucket.data_bucket[0].id
+  key    = "._init_bucket"
+  content = "init"
+  acl    = "private"
+}
+
