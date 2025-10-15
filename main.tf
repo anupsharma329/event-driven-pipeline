@@ -12,7 +12,7 @@ provider "aws" {
 }
 
 locals {
-  name_suffix = substr(replace(uuid(), "-", ""), 0, 8)
+  name_suffix = var.name_suffix != "" ? var.name_suffix : "main"
   lambda_name = var.lambda_function_name != "" ? var.lambda_function_name : "megaminds-processor-${local.name_suffix}"
 }
 
@@ -90,19 +90,17 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
-# Upload local lambda zip to S3 code bucket (optional) - using local file directly for aws_lambda_function
-
-# Create Lambda function using local file
+# Create Lambda function
 resource "aws_lambda_function" "processor" {
-  filename         = "${path.module}/build/processor.zip"
+  filename         = "build/processor.zip"
   function_name    = local.lambda_name
   role             = aws_iam_role.lambda_role.arn
   handler          = "lambda_fn.processor.handler"
   runtime          = "python3.10"
   timeout          = 30
-  publish          = true
+  source_code_hash = filebase64sha256("build/processor.zip")
 
-  source_code_hash = filebase64sha256("${path.module}/build/processor.zip")
+  depends_on = [aws_iam_role_policy.lambda_policy]
 }
 
 # Permission for S3 to invoke Lambda
@@ -114,7 +112,7 @@ resource "aws_lambda_permission" "allow_s3" {
   source_arn    = aws_s3_bucket.raw_events.arn
 }
 
-# Create S3 bucket notification to invoke Lambda on object creation
+# Create S3 bucket notification
 resource "aws_s3_bucket_notification" "raw_to_lambda" {
   bucket = aws_s3_bucket.raw_events.id
 

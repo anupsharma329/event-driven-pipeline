@@ -21,3 +21,10 @@ variable "code_bucket_name" {
   type        = string
   default     = ""
 }
+
+# Add this missing variable
+variable "name_suffix" {
+  description = "Suffix for resource names (optional). If empty, 'main' is used."
+  type        = string
+  default     = ""
+}

@@ -29,7 +29,11 @@ jobs:
       - name: Package Lambda function
         run: |
           mkdir -p build
-          zip -r build/processor.zip lambda_fn/ -x "*.git*" "*.github*" "*.terraform*" "*__pycache__*" "*.pytest_cache*"
+          zip -r build/processor.zip lambda_fn/ -x "*__pycache__*"
+          echo "📁 Checking if ZIP file was created:"
+          ls -la build/
+          echo "📁 Checking lambda_fn contents:"
+          find lambda_fn/ -type f
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -48,12 +52,26 @@ jobs:
         run: |
           # Simple format check - if fails, just format and continue
           terraform fmt -check || (echo "⚠️ Formatting issues found - auto-formatting" && terraform fmt)
-
       - name: Terraform Init & Apply
         run: |
           terraform init
           terraform validate
+          terraform plan -detailed-exitcode
           terraform apply -auto-approve
+
+      - name: Verify AWS Resources
+        run: |
+          echo "🔍 Checking created resources..."
+          
+          # Check if Lambda exists
+          aws lambda list-functions --query 'Functions[?contains(FunctionName, `megaminds-processor`)]'
+          
+          # Check S3 buckets
+          aws s3 ls | grep megaminds-raw
+          
+          # Check IAM roles
+          aws iam list-roles --query 'Roles[?contains(RoleName, `megaminds-lambda-role`)]'
+          
 
       - name: ✅ Deployment Complete
         run: echo "🎉 Terraform deployment completed successfully!"
