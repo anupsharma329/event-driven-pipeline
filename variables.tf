@@ -1,30 +1,35 @@
 variable "aws_region" {
-  description = "AWS region to deploy resources into"
+  description = "AWS region"
   type        = string
   default     = "us-east-1"
 }
 
 variable "lambda_function_name" {
-  description = "Name of the Lambda function (optional). If empty, a generated name is used."
+  description = "Name of the Lambda function"
   type        = string
   default     = ""
 }
 
 variable "raw_bucket_name" {
-  description = "S3 bucket name to receive raw events (optional). If empty, a generated name is used."
+  description = "Name of the raw events S3 bucket"
   type        = string
   default     = ""
 }
 
-variable "code_bucket_name" {
-  description = "S3 bucket name used for storing lambda code (optional). If empty, a generated name is used)"
+variable "lambda_zip_path" {
+  description = "Path to the Lambda deployment package"
   type        = string
-  default     = ""
+  default     = "lambda-function.zip"
 }
 
-# Add this missing variable
-variable "name_suffix" {
-  description = "Suffix for resource names (optional). If empty, 'main' is used."
+variable "lambda_handler" {
+  description = "Lambda function handler"
   type        = string
-  default     = ""
+  default     = "index.handler"
+}
+
+variable "lambda_runtime" {
+  description = "Lambda runtime"
+  type        = string
+  default     = "python3.9"
 }

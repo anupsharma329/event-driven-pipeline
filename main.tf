@@ -71,4 +71,64 @@ resource "aws_iam_role" "lambda_role" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
-# ... rest of your IAM and Lambda configuration
+# ADD THESE IAM POLICIES FOR LAMBDA
+data "aws_iam_policy_document" "lambda_permissions" {
+  statement {
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents"
+    ]
+    resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  statement {
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:ListBucket"
+    ]
+    resources = [
+      aws_s3_bucket.raw_events.arn,
+      "${aws_s3_bucket.raw_events.arn}/*"
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_policy" {
+  name   = "megaminds-lambda-policy-${local.name_suffix}"
+  role   = aws_iam_role.lambda_role.id
+  policy = data.aws_iam_policy_document.lambda_permissions.json
+}
+
+# ADD THE MISSING LAMBDA FUNCTION RESOURCE
+resource "aws_lambda_function" "processor" {
+  filename      = var.lambda_zip_path != "" ? var.lambda_zip_path : "lambda-function.zip"
+  function_name = local.lambda_name
+  role          = aws_iam_role.lambda_role.arn
+  handler       = var.lambda_handler != "" ? var.lambda_handler : "index.handler"
+  runtime       = var.lambda_runtime != "" ? var.lambda_runtime : "python3.9"
+
+  source_code_hash = filebase64sha256(var.lambda_zip_path != "" ? var.lambda_zip_path : "lambda-function.zip")
+  
+  environment {
+    variables = {
+      S3_BUCKET_NAME = aws_s3_bucket.raw_events.bucket
+      AWS_REGION     = var.aws_region
+    }
+  }
+
+  tags = {
+    Environment = "production"
+    Project     = "megaminds"
+  }
+}
+
+# OPTIONAL: Add Lambda permissions for other services (if needed)
+resource "aws_lambda_permission" "s3_invoke" {
+  statement_id  = "AllowExecutionFromS3"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.processor.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = aws_s3_bucket.raw_events.arn
+}
