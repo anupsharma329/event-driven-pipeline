@@ -35,6 +35,7 @@ resource "aws_s3_bucket" "raw_events" {
   lifecycle_rule {
     id      = "expire-30-days"
     enabled = true
+
     expiration {
       days = 30
     }
@@ -45,6 +46,7 @@ resource "aws_s3_bucket" "raw_events" {
 data "aws_iam_policy_document" "lambda_assume" {
   statement {
     actions = ["sts:AssumeRole"]
+
     principals {
       type        = "Service"
       identifiers = ["lambda.amazonaws.com"]
@@ -67,7 +69,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents",
         ]
         Effect   = "Allow"
         Resource = "arn:aws:logs:*:*:*"
@@ -76,14 +78,14 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
         ]
         Effect = "Allow"
         Resource = [
           aws_s3_bucket.raw_events.arn,
-          "${aws_s3_bucket.raw_events.arn}/*"
+          "${aws_s3_bucket.raw_events.arn}/*",
         ]
-      }
+      },
     ]
   })
 }
