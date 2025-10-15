@@ -29,7 +29,7 @@ jobs:
       - name: Package Lambda function
         run: |
           mkdir -p build
-          zip -r build/processor.zip lambda_fn/processor.py
+          zip -r build/processor.zip lambda_fn/ -x "*.git*" "*.github*" "*.terraform*" "*__pycache__*" "*.pytest_cache*"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -44,33 +44,14 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
       - name: Terraform Init & Apply
         run: |
           terraform init
+          terraform validate
           terraform apply -auto-approve
 
-      - name: Deploy or Update Lambda Function
-        env:
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          AWS_LAMBDA_ROLE_ARN: ${{ secrets.AWS_LAMBDA_ROLE_ARN }}
-        run: |
-            echo "🔍 Checking if Lambda function 'megaminds-processor-91eb83c2' exists..."
-                if aws lambda get-function --function-name megaminds-processor-91eb83c2 >/dev/null 2>&1; then
-              echo "✅ Lambda exists — updating code..."
-              aws lambda update-function-code \
-                --function-name megaminds-processor-91eb83c2 \
-                --zip-file fileb://build/processor.zip \
-                --region $AWS_REGION
-            else
-              echo "🚀 Lambda not found — creating new Lambda..."
-              aws lambda create-function \
-                --function-name megaminds-processor-91eb83c2 \
-                --zip-file fileb://build/processor.zip \
-                --handler lambda_fn.processor.handler \
-                --runtime python3.10 \
-                --role $AWS_LAMBDA_ROLE_ARN \
-                --region $AWS_REGION
-            fi
-
       - name: ✅ Deployment Complete
-        run: echo "🎉 Lambda deployment completed successfully!"
+        run: echo "🎉 Terraform deployment completed successfully!"
