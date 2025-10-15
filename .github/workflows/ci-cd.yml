@@ -24,7 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest
-          pytest -q || echo "⚠️ No tests found, skipping tests"
+          pytest -q || echo " No tests found, skipping tests"
 
       - name: Package Lambda function
         run: |
@@ -51,7 +51,7 @@ jobs:
       - name: Terraform Format Check
         run: |
           # Simple format check - if fails, just format and continue
-          terraform fmt -check || (echo "⚠️ Formatting issues found - auto-formatting" && terraform fmt)
+          terraform fmt -check || (echo " Formatting issues found - auto-formatting" && terraform fmt)
       - name: Terraform Init & Apply
         run: |
           terraform init
@@ -72,6 +72,5 @@ jobs:
           # Check IAM roles
           aws iam list-roles --query 'Roles[?contains(RoleName, `megaminds-lambda-role`)]'
           
-
-      - name: ✅ Deployment Complete
-        run: echo "🎉 Terraform deployment completed successfully!"
+      - name: Deployment Complete
+        run: echo " Terraform deployment completed successfully!"
