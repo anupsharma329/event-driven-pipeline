@@ -1,4 +1,3 @@
-# main.tf (skeleton)
 terraform {
   required_providers {
     aws = {
