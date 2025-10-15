@@ -1,108 +1,104 @@
 import json
-import logging
-import os
-from datetime import datetime
 import boto3
+from datetime import datetime, timedelta
+import os
 
-# -----------------------------
-# Setup Logger
-# -----------------------------
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+s3_client = boto3.client('s3')
+dynamodb = boto3.resource('dynamodb')
 
-# -----------------------------
-# AWS S3 Client
-# -----------------------------
-S3_BUCKET = os.environ.get("RAW_BUCKET")  # fallback not needed, using Terraform bucket
-S3_CLIENT = boto3.client("s3")
+# DynamoDB table for daily summaries
+SUMMARY_TABLE = os.environ.get('SUMMARY_TABLE', 'daily-summaries')
 
-# -----------------------------
-# Pure processing function
-# -----------------------------
-def process_records(records):
-    """
-    Computes:
-      - count of records
-      - sums of numeric fields per key
-    Input: list of dicts
-    Output: summary dict
-    """
-    total = 0
-    sums = {}
-    for r in records:
-        total += 1
-        for k, v in r.items():
-            if isinstance(v, (int, float)):
-                sums[k] = sums.get(k, 0) + v
-
-    return {"count": total, "sums": sums, "timestamp": datetime.utcnow().isoformat()}
-
-# -----------------------------
-# Lambda handler
-# -----------------------------
 def handler(event, context):
-    logger.info("Received event: %s", json.dumps(event))
-
-    # Extract S3 object info
+    """
+    Process incoming JSON files from S3 and generate daily summaries
+    """
+    print(f"Processing event: {json.dumps(event)}")
+    
     try:
-        rec = event["Records"][0]
-        bucket = rec["s3"]["bucket"]["name"]
-        key = rec["s3"]["object"]["key"]
-        logger.info("Processing S3 object: s3://%s/%s", bucket, key)
-    except Exception:
-        logger.exception("Failed to parse S3 event")
-        raise
+        # Process each S3 event record
+        for record in event['Records']:
+            if 's3' in record:
+                bucket = record['s3']['bucket']['name']
+                key = record['s3']['object']['key']
+                
+                print(f"Processing file: s3://{bucket}/{key}")
+                
+                # Get the JSON file from S3
+                response = s3_client.get_object(Bucket=bucket, Key=key)
+                json_data = json.loads(response['Body'].read().decode('utf-8'))
+                
+                # Process the JSON data
+                process_json_data(json_data, key)
+                
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'message': 'Processing completed successfully'})
+        }
+        
+    except Exception as e:
+        print(f"Error processing file: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
 
-    # Download object from S3
+def process_json_data(data, source_key):
+    """
+    Process JSON data and update daily summaries
+    """
     try:
-        obj = S3_CLIENT.get_object(Bucket=bucket, Key=key)
-        body = obj["Body"].read().decode("utf-8")
-        data = json.loads(body)
+        # Extract date from filename or use current date
+        processing_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # Sample processing - count records, calculate totals, etc.
+        summary = {
+            'date': processing_date,
+            'total_records': len(data) if isinstance(data, list) else 1,
+            'data_type': infer_data_type(data),
+            'source_file': source_key,
+            'processed_at': datetime.now().isoformat(),
+            'total_amount': calculate_total_amount(data),
+            'record_count': count_records(data)
+        }
+        
+        # Store summary in DynamoDB
+        store_daily_summary(summary)
+        
+        print(f"Processed summary: {summary}")
+        
+    except Exception as e:
+        print(f"Error processing JSON data: {str(e)}")
 
-        # -----------------------------
-        # Handle JSON structure
-        # -----------------------------
-        # 1. If top-level dict with 'items', use the items array
-        # 2. If top-level list, use directly
-        # 3. Otherwise wrap single dict into a list
-        if isinstance(data, dict) and "items" in data and isinstance(data["items"], list):
-            records = data["items"]
-        elif isinstance(data, list):
-            records = data
-        else:
-            records = [data]
+def infer_data_type(data):
+    """Infer data type from JSON structure"""
+    if isinstance(data, list):
+        if data and 'transaction' in data[0]:
+            return 'transactions'
+        elif data and 'user' in data[0]:
+            return 'user_activity'
+    return 'generic'
 
-        logger.info("Number of records to process: %d", len(records))
+def calculate_total_amount(data):
+    """Calculate total amount from transaction data"""
+    total = 0
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and 'amount' in item:
+                total += float(item.get('amount', 0))
+    return total
 
-    except Exception:
-        logger.exception("Failed to read or parse S3 object %s/%s", bucket, key)
-        raise
+def count_records(data):
+    """Count records in the data"""
+    if isinstance(data, list):
+        return len(data)
+    return 1
 
-    # Process records
-    summary = process_records(records)
-
-    # Upload summary back to S3
-    dest_key = f"processed/{key}.summary.json"
+def store_daily_summary(summary):
+    """Store daily summary in DynamoDB"""
     try:
-        S3_CLIENT.put_object(
-            Bucket=bucket,
-            Key=dest_key,
-            Body=json.dumps(summary, indent=2).encode("utf-8"),
-        )
-        logger.info("Wrote summary to s3://%s/%s", bucket, dest_key)
-    except Exception:
-        logger.exception("Failed to write summary to s3://%s/%s", bucket, dest_key)
-        raise
-
-    return {"status": "ok", "summary_key": dest_key}
-
-# -----------------------------
-# Local testing
-# -----------------------------
-if __name__ == "__main__":
-    sample = [
-        {"id": 1, "value": 10},
-        {"id": 2, "value": 25},
-        {"id": 3, "value": 15}
-    ]
-    print(process_records(sample))
+        table = dynamodb.Table(SUMMARY_TABLE)
+        table.put_item(Item=summary)
+        print(f"Stored summary for date: {summary['date']}")
+    except Exception as e:
+        print(f"Error storing summary: {str(e)}")

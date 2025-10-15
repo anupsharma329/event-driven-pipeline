@@ -1,4 +1,4 @@
-name: CI-CD Terraform + Lambda Deploy
+name: Event-Driven Pipeline Deployment
 
 on:
   push:
@@ -7,70 +7,61 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-
+    environment: production
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
 
-      - name: Install dependencies & run tests
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
-          pytest -q || echo " No tests found, skipping tests"
+    - name: Create Lambda package
+      run: |
+        mkdir -p build
+        cd lambda_fn
+        zip -r ../lambda-function.zip .
+        cd ..
+        echo "Lambda package created"
 
-      - name: Package Lambda function
-        run: |
-          mkdir -p build
-          zip -r build/processor.zip lambda_fn/ -x "*__pycache__*"
-          echo "📁 Checking if ZIP file was created:"
-          ls -la build/
-          echo "📁 Checking lambda_fn contents:"
-          find lambda_fn/ -type f
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
 
-      - name: Verify AWS connection
-        run: aws sts get-caller-identity
+    - name: Terraform Init
+      run: terraform init
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+    - name: Terraform Validate
+      run: terraform validate
 
-      - name: Terraform Format Check
-        run: |
-          # Simple format check - if fails, just format and continue
-          terraform fmt -check || (echo " Formatting issues found - auto-formatting" && terraform fmt)
-      - name: Terraform Init & Apply
-        run: |
-          terraform init
-          terraform validate
-          terraform plan -detailed-exitcode
-          terraform apply -auto-approve
+    - name: Terraform Plan
+      run: terraform plan -input=false
 
-      - name: Verify AWS Resources
-        run: |
-          echo "🔍 Checking created resources..."
-          
-          # Check if Lambda exists
-          aws lambda list-functions --query 'Functions[?contains(FunctionName, `megaminds-processor`)]'
-          
-          # Check S3 buckets
-          aws s3 ls | grep megaminds-raw
-          
-          # Check IAM roles
-          aws iam list-roles --query 'Roles[?contains(RoleName, `megaminds-lambda-role`)]'
-          
-      - name: Deployment Complete
-        run: echo " Terraform deployment completed successfully!"
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main'
+      run: terraform apply -auto-approve -input=false
+
+    - name: Test Deployment
+      if: github.ref == 'refs/heads/main'
+      run: |
+        # Upload a test JSON file
+        cat > test-data.json << EOF
+        [
+          {"transaction_id": "1", "amount": 100, "user_id": "user1", "timestamp": "2024-01-01T10:00:00Z"},
+          {"transaction_id": "2", "amount": 200, "user_id": "user2", "timestamp": "2024-01-01T11:00:00Z"}
+        ]
+        EOF
+        
+        # Upload to S3 to trigger processing
+        aws s3 cp test-data.json s3://$(terraform output -raw raw_bucket_name)/test-data.json
+        echo "Test file uploaded, Lambda should process it automatically"

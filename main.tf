@@ -5,6 +5,7 @@ terraform {
       version = ">= 4.0"
     }
   }
+  required_version = ">= 1.0"
 }
 
 provider "aws" {
@@ -12,16 +13,20 @@ provider "aws" {
 }
 
 locals {
-  name_suffix = "prod"  # Changed to avoid conflicts
+  name_suffix = "prod"
   lambda_name = var.lambda_function_name != "" ? var.lambda_function_name : "megaminds-processor-${local.name_suffix}"
 }
 
-# S3 bucket to receive raw events
+# S3 bucket for raw JSON events
 resource "aws_s3_bucket" "raw_events" {
   bucket = var.raw_bucket_name != "" ? var.raw_bucket_name : "megaminds-raw-${local.name_suffix}"
+  
+  tags = {
+    Environment = "production"
+    Project     = "event-pipeline"
+  }
 }
 
-# Versioning configuration
 resource "aws_s3_bucket_versioning" "raw_events" {
   bucket = aws_s3_bucket.raw_events.id
   versioning_configuration {
@@ -29,10 +34,8 @@ resource "aws_s3_bucket_versioning" "raw_events" {
   }
 }
 
-# Encryption configuration
 resource "aws_s3_bucket_server_side_encryption_configuration" "raw_events" {
   bucket = aws_s3_bucket.raw_events.id
-
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -40,25 +43,43 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "raw_events" {
   }
 }
 
-# Lifecycle configuration
-resource "aws_s3_bucket_lifecycle_configuration" "raw_events" {
-  bucket = aws_s3_bucket.raw_events.id
-
-  rule {
-    id     = "expire-30-days"
-    status = "Enabled"
-
-    expiration {
-      days = 30
-    }
+# S3 bucket for processed data
+resource "aws_s3_bucket" "processed_data" {
+  bucket = "megaminds-processed-${local.name_suffix}"
+  
+  tags = {
+    Environment = "production"
+    Project     = "event-pipeline"
   }
 }
 
-# IAM role and policy for Lambda (rest of your code remains the same)
+# DynamoDB for daily summaries
+resource "aws_dynamodb_table" "daily_summaries" {
+  name           = "daily-summaries-${local.name_suffix}"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "date"
+  range_key      = "processed_at"
+
+  attribute {
+    name = "date"
+    type = "S"
+  }
+
+  attribute {
+    name = "processed_at"
+    type = "S"
+  }
+
+  tags = {
+    Environment = "production"
+    Project     = "event-pipeline"
+  }
+}
+
+# IAM role for Lambda
 data "aws_iam_policy_document" "lambda_assume" {
   statement {
     actions = ["sts:AssumeRole"]
-
     principals {
       type        = "Service"
       identifiers = ["lambda.amazonaws.com"]
@@ -71,7 +92,7 @@ resource "aws_iam_role" "lambda_role" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
-# ADD THESE IAM POLICIES FOR LAMBDA
+# Enhanced IAM policies for Lambda
 data "aws_iam_policy_document" "lambda_permissions" {
   statement {
     actions = [
@@ -90,8 +111,21 @@ data "aws_iam_policy_document" "lambda_permissions" {
     ]
     resources = [
       aws_s3_bucket.raw_events.arn,
-      "${aws_s3_bucket.raw_events.arn}/*"
+      "${aws_s3_bucket.raw_events.arn}/*",
+      aws_s3_bucket.processed_data.arn,
+      "${aws_s3_bucket.processed_data.arn}/*"
     ]
+  }
+
+  statement {
+    actions = [
+      "dynamodb:PutItem",
+      "dynamodb:GetItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query",
+      "dynamodb:Scan"
+    ]
+    resources = [aws_dynamodb_table.daily_summaries.arn]
   }
 }
 
@@ -101,34 +135,67 @@ resource "aws_iam_role_policy" "lambda_policy" {
   policy = data.aws_iam_policy_document.lambda_permissions.json
 }
 
-# ADD THE MISSING LAMBDA FUNCTION RESOURCE
+# Lambda function
 resource "aws_lambda_function" "processor" {
-  filename      = var.lambda_zip_path != "" ? var.lambda_zip_path : "lambda-function.zip"
+  filename      = "lambda-function.zip"
   function_name = local.lambda_name
   role          = aws_iam_role.lambda_role.arn
-  handler       = var.lambda_handler != "" ? var.lambda_handler : "index.handler"
-  runtime       = var.lambda_runtime != "" ? var.lambda_runtime : "python3.9"
+  handler       = "index.handler"
+  runtime       = "python3.9"
+  timeout       = 60
 
-  source_code_hash = filebase64sha256(var.lambda_zip_path != "" ? var.lambda_zip_path : "lambda-function.zip")
-  
   environment {
     variables = {
-      S3_BUCKET_NAME = aws_s3_bucket.raw_events.bucket
-      AWS_REGION     = var.aws_region
+      SUMMARY_TABLE    = aws_dynamodb_table.daily_summaries.name
+      PROCESSED_BUCKET = aws_s3_bucket.processed_data.bucket
+      AWS_REGION       = var.aws_region
     }
   }
 
   tags = {
     Environment = "production"
-    Project     = "megaminds"
+    Project     = "event-pipeline"
   }
 }
 
-# OPTIONAL: Add Lambda permissions for other services (if needed)
-resource "aws_lambda_permission" "s3_invoke" {
-  statement_id  = "AllowExecutionFromS3"
+# S3 trigger for Lambda
+resource "aws_lambda_permission" "s3_trigger" {
+  statement_id  = "AllowS3Invoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.processor.function_name
   principal     = "s3.amazonaws.com"
   source_arn    = aws_s3_bucket.raw_events.arn
+}
+
+resource "aws_s3_bucket_notification" "lambda_trigger" {
+  bucket = aws_s3_bucket.raw_events.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.processor.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".json"
+  }
+
+  depends_on = [aws_lambda_permission.s3_trigger]
+}
+
+# CloudWatch Event for daily report generation
+resource "aws_cloudwatch_event_rule" "daily_report" {
+  name                = "daily-report-generation"
+  description         = "Trigger daily report generation"
+  schedule_expression = "cron(0 2 * * ? *)"  # Daily at 2 AM UTC
+}
+
+resource "aws_cloudwatch_event_target" "daily_report_lambda" {
+  rule      = aws_cloudwatch_event_rule.daily_report.name
+  target_id = "GenerateDailyReport"
+  arn       = aws_lambda_function.processor.arn
+}
+
+resource "aws_lambda_permission" "cloudwatch_report" {
+  statement_id  = "AllowCloudWatchInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.processor.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.daily_report.arn
 }

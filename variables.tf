@@ -19,17 +19,17 @@ variable "raw_bucket_name" {
 variable "lambda_zip_path" {
   description = "Path to the Lambda deployment package"
   type        = string
-  default     = "lambda-function.zip"
+  default     = ""
 }
 
 variable "lambda_handler" {
   description = "Lambda function handler"
   type        = string
-  default     = "index.handler"
+  default     = ""
 }
 
 variable "lambda_runtime" {
   description = "Lambda runtime"
   type        = string
-  default     = "python3.9"
+  default     = ""
 }
